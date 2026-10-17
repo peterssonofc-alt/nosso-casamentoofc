@@ -1,0 +1,25 @@
+<script>(function(){
+let state={},ver=0,subs={};
+const snapOf=c=>{const m=state[c]||{};const docs=Object.keys(m).sort().map(id=>({id,exists:true,data:()=>m[id]}));return{docs,size:docs.length,empty:!docs.length}};
+const fire=c=>(subs[c]||[]).forEach(f=>{try{f()}catch(e){console.error(e)}});
+const fireAll=()=>Object.keys(subs).forEach(fire);
+let inflight=0;
+async function poll(){
+  if(inflight)return;
+  try{const r=await fetch('/api/all?v='+ver);const j=await r.json();if(!j.same){state=j.data;ver=j.version;fireAll()}}catch(e){}
+}
+async function send(op,c,id,d){
+  inflight++;
+  try{const r=await fetch('/api/write',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({op,c,id,d})});
+    if(!r.ok)throw {code:'unavailable'};const j=await r.json();ver=j.version}
+  finally{inflight--}
+}
+const db={collection(c){return{
+  onSnapshot(fn){const f=()=>fn(snapOf(c));(subs[c]=subs[c]||[]).push(f);if(ver)f();return()=>{subs[c]=subs[c].filter(x=>x!==f)}},
+  doc(id){return{
+    async set(d){(state[c]=state[c]||{})[id]=JSON.parse(JSON.stringify(d));fire(c);await send('set',c,id,d)},
+    async update(d){const cur=(state[c]=state[c]||{})[id]||{};state[c][id]={...cur,...d};fire(c);await send('update',c,id,d)},
+    async delete(){if(state[c])delete state[c][id];fire(c);await send('delete',c,id)}}}}}};
+window.claude={use:async n=>n==='db'?db:null};
+poll();setInterval(poll,2500);
+})();</script>
